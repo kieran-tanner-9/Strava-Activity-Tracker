@@ -487,12 +487,22 @@
       const ctx = document.getElementById('statsChart').getContext('2d');
       const athleteSportSummary = {};
       const sports = new Set();
+      
       filtered.forEach(row => {
-        const ath = row.Athlete; const spt = row.Club; const mi = Number(row.Miles);
+        const ath = row.Athlete; 
+        const spt = row.Club; 
+        const mi = Number(row.Miles);
+        
+        // FIX: Prevent Prototype Pollution
+        if (!ath || !spt || ath === '__proto__' || spt === '__proto__' || ath === 'constructor' || spt === 'constructor') {
+          return;
+        }
+
         if (!athleteSportSummary[ath]) athleteSportSummary[ath] = {};
         athleteSportSummary[ath][spt] = (athleteSportSummary[ath][spt] || 0) + mi;
         sports.add(spt);
       });
+
       const athletes = Object.keys(athleteSportSummary);
       const sportsArray = Array.from(sports).sort();
       const colors = { 'Cycling': 'rgba(255, 99, 132, 0.8)', 'Running': 'rgba(54, 162, 235, 0.8)', 'Swimming': 'rgba(75, 192, 192, 0.8)', 'Walking': 'rgba(153, 102, 255, 0.8)' };
@@ -570,26 +580,22 @@
         }
     }
 
-    // --- OG ADMIN TOOLS (UPDATED WITH MODAL) ---
+    // --- OG ADMIN TOOLS (SECURE VERSION) ---
     function initialiseOGAdminFeatures() {
       document.getElementById('forceSync').addEventListener('click', async () => {
           if(!confirm('Force Sync?')) return;
           try { const res = await fetch('/api/force-sync'); const j = await res.json(); alert(j.message); } catch(e) { alert('Sync Failed'); }
       });
       
-      // ADMIN MODAL LOGIC
       const modal = document.getElementById('adminToolsModal');
       const closeBtn = document.getElementById('closeAdminTools');
       
       document.getElementById('adminTools').addEventListener('click', async () => {
           modal.classList.remove('hidden');
-          // Fetch Info
           const res = await fetch('/api/admin/debug-info');
           const d = await res.json();
           const info = `Status: ${d.status}\nLast Sync: ${d.last_sync}\n\nDB Users: ${d.database.users}\nDB Activities: ${d.database.total_activities}`;
           document.getElementById('adminDebugContent').textContent = info;
-          
-          // Fetch User List
           loadUserList();
       });
       
@@ -611,19 +617,35 @@
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-gray-50 dark:hover:bg-gray-700';
                 
-                // Role badge
-                let role = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">User</span>';
-                if (u.is_og_admin) role = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">OG Admin</span>';
-                else if (u.is_admin) role = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">Admin</span>';
+                // FIX: Build row using secure DOM methods to prevent XSS
+                const nameTd = document.createElement('td');
+                nameTd.className = 'px-3 py-2 whitespace-nowrap text-gray-900 dark:text-gray-200';
+                nameTd.textContent = `${u.firstname} ${u.lastname}`;
+                tr.appendChild(nameTd);
+
+                const idTd = document.createElement('td');
+                idTd.className = 'px-3 py-2 whitespace-nowrap text-gray-500 dark:text-gray-400 font-mono text-xs';
+                idTd.textContent = u.athlete_id;
+                tr.appendChild(idTd);
+
+                const roleTd = document.createElement('td');
+                roleTd.className = 'px-3 py-2 whitespace-nowrap';
+                let roleHtml = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">User</span>';
+                if (u.is_og_admin) roleHtml = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">OG Admin</span>';
+                else if (u.is_admin) roleHtml = '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">Admin</span>';
+                roleTd.innerHTML = roleHtml;
+                tr.appendChild(roleTd);
+
+                const actionTd = document.createElement('td');
+                actionTd.className = 'px-3 py-2 whitespace-nowrap text-right';
+                const delBtn = document.createElement('button');
+                delBtn.innerHTML = '🗑️';
+                delBtn.className = 'text-red-600 hover:text-red-900 dark:hover:text-red-400 font-bold';
+                delBtn.title = 'Delete User';
+                delBtn.addEventListener('click', () => window.deleteUser(u.athlete_id, u.firstname));
+                actionTd.appendChild(delBtn);
+                tr.appendChild(actionTd);
                 
-                tr.innerHTML = `
-                    <td class="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-gray-200">${u.firstname} ${u.lastname}</td>
-                    <td class="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-gray-400 font-mono text-xs">${u.athlete_id}</td>
-                    <td class="px-3 py-2 whitespace-nowrap">${role}</td>
-                    <td class="px-3 py-2 whitespace-nowrap text-right">
-                        <button onclick="deleteUser('${u.athlete_id}', '${u.firstname}')" class="text-red-600 hover:text-red-900 dark:hover:text-red-400 font-bold" title="Delete User">🗑️</button>
-                    </td>
-                `;
                 tbody.appendChild(tr);
             });
         } catch(e) {
@@ -631,26 +653,16 @@
         }
     }
 
-    // Global scope so onclick works
     window.deleteUser = async function(id, name) {
         if(!confirm(`WARNING: Are you sure you want to delete ${name}?\n\nThis will PERMANENTLY delete the user and ALL their activity history.\n\nThis cannot be undone.`)) return;
-        
         try {
             const res = await fetch('/api/user', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: id })
             });
-            
-            if(res.ok) {
-                loadUserList(); // Refresh table
-            } else {
-                const j = await res.json();
-                alert('Error: ' + j.error);
-            }
-        } catch(e) {
-            alert('Failed to connect to server');
-        }
+            if(res.ok) { loadUserList(); } else { const j = await res.json(); alert('Error: ' + j.error); }
+        } catch(e) { alert('Failed to connect to server'); }
     }
   </script>
 </body>
